@@ -107,12 +107,15 @@ for _ in range(20):
 kubectl port-forward svc/tensorrt-server -n tensorrt-llm-model-server 8000:8000
 ```
 
-```bash
+```python
 import requests, time, random
 URL = "http://localhost:8000/v2/models/ensemble/generate"
 response = requests.post(URL, json={"text_input": "Hello, I would like to know if my son is covered by my car insurance policy to drive my vehicle?", "max_tokens": 2048, "bad_words": "", "stop_words": ""})
 print(response.json())
 ```
+
+For a more detailed use case, check this [repository](https://github.com/elamribadrayour/tensorrt-llm-model-user)
+
 
 ## Architecture
 
