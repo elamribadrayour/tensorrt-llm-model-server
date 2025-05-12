@@ -1,0 +1,67 @@
+tgi:
+  enabled: false
+  model: mistralai/Mistral-7B-Instruct-v0.2
+  lora_adapters: predibase/customer_support
+  image: ghcr.io/huggingface/text-generation-inference:3.2.3
+  maxBatchSize: 1
+  maxTotalTokens: 2049
+  maxInputTokens: 2048
+  maxConcurrentRequests: 32
+  maxBatchPrefillTokens: 2048
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 4000Mi
+    limits:
+      cpu: 2000m
+      memory: 8000Mi
+
+tensorrt:
+  enabled: true
+  task: model-server
+  organization: "meta-llama"
+  model_name: "Llama-3.1-8B-Instruct"
+  bucket_name: "datascience-result-prod"
+  gcp_service_account: "gcp-service-account"
+  deployment_name: "Llama-3.1-8B-Instruct-46af2e1c-7b7a-45d8-94cf-3d160d0d286a"
+  image_server: nvcr.io/nvidia/tritonserver:25.03-trtllm-python-py3
+  image_builder: ghcr.io/elamribadrayour/tensorrt-llm-model-builder:25.03-trtllm-python-py3
+  # command: ['mpirun', '--allow-run-as-root', '-n', '1', '/opt/tritonserver/bin/tritonserver', '--model-repository=llama_ifb/', '--grpc-port=8001', '--http-port=8000', '--metrics-port=8002', '--grpc-port=8001', '--http-port=8000', '--metrics-port=8002', '--disable-auto-complete-config', '--backend-config=python,shm-region-prefix-name=prefix0_', ':']
+
+  requests:
+    cpu: 1000m
+    memory: 32000Mi
+  limits:
+    cpu: 2000m
+    memory: 32000Mi
+
+prometheus:
+  scrape_interval: 1s
+  tgi_svc: tgi-service.model-serving.svc.cluster.local:8080
+  tensorrt_svc: tensorrt-service.model-serving.svc.cluster.local:8002
+
+grafana:
+  enabled: true
+  service:
+    type: LoadBalancer
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  persistence:
+    enabled: true
+    size: 10Gi
+  server:
+    service:
+      type: ClusterIP
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+        ephemeral-storage: 50Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
+        ephemeral-storage: 50Mi
+    persistentVolume:
+      enabled: false

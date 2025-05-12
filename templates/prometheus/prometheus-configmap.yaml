@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: tensorrt-llm-model-server
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrape_interval }}
+    scrape_configs:
+      - job_name: 'tgi'
+        static_configs:
+          - targets: [{{ .Values.prometheus.tgi_svc | quote }}]
+        metrics_path: /metrics
+      - job_name: 'tensorrt'
+        static_configs:
+          - targets: [{{ .Values.prometheus.tensorrt_svc | quote }}]
+        metrics_path: /metrics

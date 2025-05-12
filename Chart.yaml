@@ -1,0 +1,11 @@
+apiVersion: v2
+name: model-serving
+description: A Helm chart for Model Serving deployment
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  - name: grafana
+    version: "11.6.5"
+    repository: https://charts.bitnami.com/bitnami
+    condition: grafana.enabled

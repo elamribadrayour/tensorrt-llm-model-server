@@ -1,0 +1,145 @@
+{{- if (and .Values.tensorrt.enabled (eq .Values.tensorrt.task "model-server")) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tensorrt-server
+  namespace: tensorrt-llm-model-server
+spec:
+  selector:
+    matchLabels:
+      app: tensorrt
+  template:
+    metadata:
+      labels:
+        app: tensorrt
+    spec:
+      initContainers:
+        - name: copy-gcs-to-data
+          image: gcr.io/google.com/cloudsdktool/google-cloud-cli:489.0.0-stable
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              gcloud auth activate-service-account --key-file=/gcp/service-account.json &&
+              if [ ! -d "/data/tensorrt/engines/{{ .Values.tensorrt.deployment_name }}" ] || [ ! -d "/data/tensorrt/configs/{{ .Values.tensorrt.deployment_name }}" ]; then
+                echo "Creating directories" &&
+                mkdir -p /data/tensorrt/engines/{{ .Values.tensorrt.deployment_name }} &&
+                mkdir -p /data/tensorrt/configs/{{ .Values.tensorrt.deployment_name }} &&
+                echo "Copying configs" &&
+                gcloud storage cp -r -v gs://{{ .Values.tensorrt.bucket_name }}/tensorrt-llm/models/configs/{{ .Values.tensorrt.deployment_name }}/* /data/tensorrt/configs/{{ .Values.tensorrt.deployment_name }} &&
+                echo "Copying engines" &&
+                gcloud storage cp -r -v gs://{{ .Values.tensorrt.bucket_name }}/tensorrt-llm/models/engines/{{ .Values.tensorrt.deployment_name }}/* /data/tensorrt/engines/{{ .Values.tensorrt.deployment_name }} &&
+                echo "Done"
+              else
+                echo "Directories already exist, skipping copy"
+              fi
+          volumeMounts:
+            - name: model-cache
+              mountPath: /data
+            - name: gcp-service-account
+              mountPath: /gcp/service-account.json
+              subPath: service-account.json
+              readOnly: true
+          env:
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/gcp/service-account.json"
+      containers:
+        - name: tensorrt-server
+          imagePullPolicy: IfNotPresent
+          image: {{ .Values.tensorrt.image_server }}
+          command: ["tritonserver", "--model-repository=/data/tensorrt/configs/{{ .Values.tensorrt.deployment_name }}", "--grpc-port=8001", "--http-port=8000", "--metrics-port=8002", "--disable-auto-complete-config", "--backend-config=python,shm-region-prefix-name=prefix0_"]
+          volumeMounts:
+            - name: model-cache
+              mountPath: /data
+            - name: huggingface-token
+              mountPath: /root/.cache/huggingface
+              readOnly: true
+            - name: gcp-service-account
+              mountPath: /gcp/service-account.json
+              subPath: service-account.json
+              readOnly: true
+          ports:
+          - containerPort: 8000
+            name: http
+          - containerPort: 8001
+            name: grpc
+          - containerPort: 8002
+            name: metrics
+          readinessProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /v2/health/live
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            # GPU Types and their characteristics:
+            # - nvidia-l4: 24GB VRAM, Ada Lovelace architecture, supports FlashAttention (current config)
+            # - nvidia-tesla-t4: 16GB VRAM, Turing architecture, no FlashAttention
+            # - nvidia-tesla-a100: 40GB VRAM, Ampere architecture, supports FlashAttention
+            # - nvidia-a100-80gb: 80GB VRAM, Ampere architecture, supports FlashAttention
+            # - nvidia-h100-80gb: 80GB VRAM, Hopper architecture, supports FlashAttention
+            # - nvidia-h100-mega-80gb: 80GB VRAM, Hopper architecture, supports FlashAttention
+            # - nvidia-h200-141gb: 141GB VRAM, Hopper architecture, supports FlashAttention
+            # - nvidia-b200: 180GB VRAM, Blackwell architecture, supports FlashAttention
+            #
+            # Note: CPU and RAM requirements are minimal as the model runs on GPU:
+            # - CPU: 1-2 cores for request handling and system operations
+            # - RAM: 4-8GB for system operations and request buffering
+            requests:
+              cpu: {{ .Values.tensorrt.requests.cpu }}
+              memory: {{ .Values.tensorrt.requests.memory }}
+              ephemeral-storage: 10Gi
+              nvidia.com/gpu: "1"  # Request 1 GPU
+            limits:
+              cpu: {{ .Values.tensorrt.limits.cpu }}
+              memory: {{ .Values.tensorrt.limits.memory }}
+              nvidia.com/gpu: "1"  # Limit to 1 GPU
+              ephemeral-storage: 20Gi
+          env:
+            - name: HUGGINGFACE_HUB_CACHE
+              value: "/data/hub"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: token
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "/gcp/service-account.json"
+      # GPU Types and their use cases:
+      # - nvidia-l4: General-purpose GPU, good for ML inference and video processing
+      # - nvidia-tesla-t4: Cost-effective for ML inference and general GPU workloads
+      # - nvidia-tesla-a100: A100 40GB, excellent for large ML models and HPC
+      # - nvidia-a100-80gb: A100 80GB, ideal for very large ML models and memory-intensive workloads
+      # - nvidia-h100-80gb: H100 80GB, best for cutting-edge ML training and inference
+      # - nvidia-h100-mega-80gb: H100 Mega 80GB, specialized for large-scale ML workloads
+      # - nvidia-h200-141gb: H200 141GB, optimized for large language models and AI workloads
+      # - nvidia-b200: B200 180GB, designed for the most demanding AI and HPC workloads
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache-pvc
+        - name: huggingface-token
+          secret:
+            secretName: huggingface-token
+            items:
+              - key: token
+                path: token
+        - name: gcp-service-account
+          secret:
+            secretName: gcp-service-account
+            items:
+              - key: service-account.json
+                path: service-account.json
+      nodeSelector:
+        cloud.google.com/gke-spot: "true"
+        cloud.google.com/gke-accelerator: nvidia-l4
+{{- end }}
